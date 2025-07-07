@@ -1,4 +1,3 @@
-
 # 💼 Smart Finance Manager
 
 A full-stack Python application to **fetch**, **parse**, and **visualize** invoice data from your Gmail inbox.  
@@ -44,25 +43,63 @@ smart_finance_manager/
 
 ---
 
-## 🐳 Setup Instructions (Docker)
+## 🧠 How It Works (FastAPI Invoice Extractor Logic)
 
-> Make sure Docker and Docker Compose are installed
+The FastAPI microservice fetches and parses invoice PDFs from your Gmail inbox using the following logic:
+
+### 📤 `extractor.py` Flow:
+
+1. **Connect to Gmail (IMAP):**
+   - Logs in using **App Password**
+   - Filters emails by platform (`Swiggy`, `Zomato`, etc.)
+
+2. **Search + Download PDF Attachments:**
+   - Only **PDFs** are considered (ignores inline content)
+   - Limit of 3 emails per platform (for speed)
+
+3. **Extract Text + Platform:**
+   - Uses `PyMuPDF` (`fitz`) to extract text
+   - Identifies sender (Swiggy, Zomato, etc.) from PDF content
+
+4. **Parse Amount + Date:**
+   - Uses regular expressions to extract total spend
+   - Uses email headers to get accurate invoice date
+
+5. **Return to Django:**
+   - A list of cleaned invoice objects with:
+     - `amount`, `platform`, `date_fetched`
+
+---
+
+## 🗃️ Log Files
+
+Every fetch is logged to a file:
 
 ```bash
-# Step 1: Clone the repo
-git clone https://github.com/farisfarsan/smart_finance_manager.git
-cd smart_finance_manager
-
-# Step 2: Create a .env file
-cp .env.example .env
-# (Update Gmail credentials inside)
-
-# Step 3: Build and run containers
-docker-compose up --build
+invoice_log_2025-07-07.log
 ```
 
-- Django will run at: [http://localhost:8000](http://localhost:8000)
-- FastAPI will run at: [http://localhost:8001](http://localhost:8001)
+Each log contains:
+- Email parsing status
+- Skipped encrypted PDFs
+- Any parsing errors
+- Successfully extracted invoice summaries
+
+You can find these logs inside the `fastapi_backend` root directory.
+
+---
+
+## ⚡️ How to Speed Up Invoice Fetching
+
+While current fetching is sequential and capped at 3 PDFs/platform for simplicity, you can **speed up parsing** with:
+
+| Strategy                          | Benefit                            |
+|----------------------------------|-------------------------------------|
+| ✅ Async PDF parsing              | Parallelizes file extraction        |
+| ✅ Background task queue (Celery) | Offloads parsing to workers         |
+| ✅ Platform-specific filtering    | Avoids unnecessary inbox searches   |
+| ✅ Hashing parsed emails          | Prevents re-processing duplicates   |
+| ✅ OAuth2 Gmail API               | Faster, more reliable than IMAP     |
 
 ---
 
@@ -115,11 +152,11 @@ EMAIL_PASS=your-app-password
 - PostgreSQL support for production
 - Spending category breakdown (Food, Travel, etc.)
 - Budget alerts + notifications
+- Redis-backed caching to reduce repeat parsing
+- Celery workers for background invoice extraction
 
 ---
 
 ## 📜 License
 
 MIT License. Feel free to fork, modify, and build your own financial agent!
-
----
