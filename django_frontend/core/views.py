@@ -18,11 +18,12 @@ import tempfile
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-
+# ====================== Home ======================
 def home(request):
     return render(request, 'core/home.html')
 
 
+# ====================== Signup ======================
 def signup_view(request):
     if request.method == 'POST':
         form = UserCreationForm(request.POST)
@@ -39,6 +40,7 @@ def signup_view(request):
     return render(request, 'core/signup.html', {'form': form})
 
 
+# ====================== Login ======================
 def login_view(request):
     if request.method == 'POST':
         username = request.POST.get('username')
@@ -55,32 +57,40 @@ def login_view(request):
     return render(request, 'core/login.html')
 
 
+# ====================== Logout ======================
 def logout_view(request):
     logout(request)
     return redirect('home')
 
 
+# ====================== FastAPI Trigger ======================
 def trigger_email_fetch(email_user, email_pass, user_id):
     try:
-        payload = {
+        response = requests.post("http://fastapi:8001/fetch-invoices/", json={
             "email_user": email_user,
             "email_pass": email_pass,
-            "user_id": int(user_id)
-        }
-        response = requests.post("http://127.0.0.1:8001/fetch-invoices/", json=payload)
+            "user_id": user_id,
+        })
         if response.status_code == 200:
             return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Fetch error: {e}")
-    return None
+        else:
+            print(f"⚠️ FastAPI error: {response.status_code} - {response.text}")
+            return {}
+    except Exception as e:
+        print(f"❌ Exception during fetch: {e}")
+        return {}
 
 
+
+
+# ====================== Date Utils ======================
 def get_previous_month(month_str):
     current = datetime.strptime(month_str, "%B %Y")
     prev = (current.replace(day=1) - timedelta(days=1))
     return prev.strftime("%B %Y")
 
 
+# ====================== Dashboard ======================
 @login_required
 def dashboard(request):
     invoices = []
@@ -90,19 +100,31 @@ def dashboard(request):
         email_user = request.POST.get("email")
         email_pass = request.POST.get("password")
         fetching = True
-        fetch_result = trigger_email_fetch(email_user, email_pass, request.user.id)
-        if fetch_result and "invoices" in fetch_result:
-            for inv in fetch_result["invoices"]:
-                Invoice.objects.get_or_create(
-                    user=request.user,
-                    amount=inv.get("amount", 0.0),
-                    platform=inv.get("platform", "Unknown"),
-                    date_fetched=datetime.strptime(inv.get("date_fetched"), "%Y-%m-%d")
-                )
-            messages.success(request, "✅ Invoices fetched successfully.")
-        else:
-            messages.error(request, "❌ Invoice fetch failed.")
 
+        fetch_result = trigger_email_fetch(email_user, email_pass, request.user.id)
+        print("🎯 Fetch result from FastAPI:", fetch_result)
+
+        if fetch_result and "invoices" in fetch_result:
+            invoices_list = fetch_result["invoices"]
+
+            if invoices_list:
+                for inv in invoices_list:
+                    Invoice.objects.get_or_create(
+                        user=request.user,
+                        amount=inv.get("amount", 0.0),
+                        platform=inv.get("platform", "Unknown"),
+                        date_fetched=datetime.strptime(inv.get("date_fetched"), "%Y-%m-%d")
+                    )
+                messages.success(request, "✅ Invoices fetched successfully.")
+            else:
+                messages.warning(request, "ℹ️ No new invoices found in Gmail.")
+        else:
+            messages.error(request, "❌ Invoice fetch failed. FastAPI did not return a valid response.")
+
+        # 🔁 PRG pattern to avoid double-fetch on reload
+        return redirect("dashboard")
+
+    # ========== GET request logic ==========
     invoices = Invoice.objects.filter(user=request.user)
 
     month_filter = request.GET.get("month", "")
@@ -150,13 +172,14 @@ def dashboard(request):
         "last_month_spend": round(last_month_spend, 2),
         "spend_diff": spend_diff,
         "percent_diff": percent_diff,
-        "total_chart_spend": sum(chart_data),  # ✅ Added to support chart logic
+        "total_chart_spend": sum(chart_data),
     }
 
     return render(request, "core/dashboard.html", context)
 
 
 
+# ====================== Download PDF ======================
 @login_required
 def download_pdf(request):
     invoices = Invoice.objects.filter(user=request.user)
@@ -177,6 +200,7 @@ def download_pdf(request):
     return response
 
 
+# ====================== 7-Day Chart ======================
 @login_required
 def latest_spend_chart(request):
     today = datetime.today().date()
@@ -191,6 +215,7 @@ def latest_spend_chart(request):
     return JsonResponse({"labels": labels, "values": values})
 
 
+# ====================== Save Invoices API ======================
 @csrf_exempt
 def save_invoices(request):
     if request.method == "POST":

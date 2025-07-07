@@ -3,42 +3,33 @@ import re
 import fitz  # PyMuPDF
 import imaplib
 import email
-import requests
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.header import decode_header
 from dateutil import parser as date_parser
 
-
-
-# ===== CONFIG =====
 TMP_DIR = "./tmp/invoice_pdfs"
 os.makedirs(TMP_DIR, exist_ok=True)
 
-# 🧠 In-memory cache of invoice hashes per user
-invoice_hash_cache = {}
+PLATFORM_FILTERS = {
+    "Swiggy": 'FROM "Swiggy"',
+    # Add more platforms here as needed
+}
 
-# ===== LOGGING =====
 def log(msg):
     LOG_FILE = f"invoice_log_{datetime.now().date()}.log"
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(msg + "\n")
     print(msg)
 
-# ===== UTILS =====
 def get_email_date(msg):
     try:
         raw_date = msg.get("Date")
         dt = date_parser.parse(raw_date)
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(tz=None).replace(tzinfo=None)
-        return dt
+        return dt.replace(tzinfo=None)
     except Exception as e:
         log(f"⚠️ Date parse issue, skipping email: {e}")
         return None
-
-def generate_pdf_hash(pdf_bytes):
-    return hashlib.sha256(pdf_bytes).hexdigest()
 
 def extract_text_from_pdf(pdf_bytes):
     try:
@@ -92,7 +83,6 @@ def get_platform_from_text(text):
         return "Amazon"
     return None
 
-# ===== MAIN FUNCTION =====
 def fetch_invoices_from_all_pdfs(email_user, email_pass, user_id):
     log(f"\n📥 Connecting to Gmail for: {email_user}")
     try:
@@ -101,75 +91,59 @@ def fetch_invoices_from_all_pdfs(email_user, email_pass, user_id):
         log("🔐 IMAP Login Successful")
     except Exception as e:
         log(f"❌ IMAP Login Failed: {e}")
-        return
+        return {"invoices": []}
 
-    status, _ = mail.select("inbox")
-    if status != "OK":
-        log("❌ Failed to select inbox.")
-        return
+    MAX_PER_PLATFORM = 3
+    total_fetched = 0
+    final_invoices = []
 
-    status, messages = mail.search(None, "ALL")
-    if status != "OK":
-        log("❌ Email search failed.")
-        return
-
-    email_ids = messages[0].split()[::-1]
-    log(f"📨 Total Emails Found: {len(email_ids)}")
-
-    now = datetime.utcnow()
-    first_day_this_month = now.replace(day=1)
-    first_day_last_month = (first_day_this_month - timedelta(days=1)).replace(day=1)
-    cutoff_start = first_day_last_month
-    cutoff_end = now
-
-    pushed = 0
-    MAX = 10
-    invoice_store[user_id] = []
-
-    if user_id not in invoice_hash_cache:
-        invoice_hash_cache[user_id] = set()
-
-    for eid in email_ids:
-        if pushed >= MAX:
-            break
-
-        _, msg_data = mail.fetch(eid, "(RFC822)")
-        msg = email.message_from_bytes(msg_data[0][1])
-        dt = get_email_date(msg)
-        if not dt or not (cutoff_start <= dt <= cutoff_end):
+    for platform, search_filter in PLATFORM_FILTERS.items():
+        mail.select("inbox")
+        status, messages = mail.search(None, search_filter)
+        if status != "OK":
+            log(f"⚠️ No emails found for {platform}")
             continue
 
-        for part in msg.walk():
-            content_dispo = part.get("Content-Disposition", "")
-            if part.get_content_type() == "application/pdf" and "attachment" in content_dispo:
-                pdf = part.get_payload(decode=True)
-                pdf_hash = generate_pdf_hash(pdf)
+        email_ids = messages[0].split()[::-1]
+        pushed = 0
+        log(f"🔍 Searching {platform}: Found {len(email_ids)} emails")
 
-                # 🧠 Skip if already seen
-                if pdf_hash in invoice_hash_cache[user_id]:
-                    continue
+        for eid in email_ids:
+            if pushed >= MAX_PER_PLATFORM:
+                break
 
-                text, platform = extract_text_from_pdf(pdf)
-                if not text.strip() or not platform:
-                    log("⚠️ Skipped PDF (no valid invoice info found)")
-                    continue
+            _, msg_data = mail.fetch(eid, "(RFC822)")
+            msg = email.message_from_bytes(msg_data[0][1])
+            dt = get_email_date(msg)
+            if not dt:
+                continue
 
-                amount = extract_amount(text)
-                if amount:
-                    invoice = {
-                        "user_id": user_id,
-                        "platform": platform,
-                        "amount": amount,
-                        "date_fetched": dt.date().isoformat(),
-                        "is_new": True
-                    }
-                    invoice_store[user_id].append(invoice)
-                    invoice_hash_cache[user_id].add(pdf_hash)
-                    pushed += 1
-                    log(f"✅ Added Invoice: ₹{amount} - {platform}")
+            for part in msg.walk():
+                content_dispo = part.get("Content-Disposition", "")
+                if part.get_content_type() == "application/pdf" and "attachment" in content_dispo:
+                    pdf = part.get_payload(decode=True)
+                    text, platform_extracted = extract_text_from_pdf(pdf)
+                    if not text.strip() or not platform_extracted:
+                        log("⚠️ Skipped PDF (no valid invoice info found)")
+                        continue
+
+                    amount = extract_amount(text)
+                    if amount:
+                        invoice = {
+                            "user_id": user_id,
+                            "platform": platform_extracted,
+                            "amount": amount,
+                            "date_fetched": dt.date().isoformat()
+                        }
+
+                        pushed += 1
+                        total_fetched += 1
+                        final_invoices.append(invoice)
+                        log(f"✅ Added Invoice: ₹{amount} - {platform_extracted}")
+                        break
 
     mail.logout()
-    log(f"📦 Total Valid Invoices Parsed: {pushed}")
+    log(f"📦 Total Invoices Parsed: {total_fetched}")
+    return {"invoices": final_invoices}
 
-# === EXPORT ===
 __all__ = ["fetch_invoices_from_all_pdfs"]

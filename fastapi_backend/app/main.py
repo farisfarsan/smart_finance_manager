@@ -28,15 +28,17 @@ def root():
 
 # 📥 Trigger invoice fetching
 @app.post("/fetch-invoices/")
-def fetch_invoices(req: FetchRequest):
-    try:
-        fetch_invoices_from_all_pdfs(req.email_user, req.email_pass, req.user_id)
-        return {"status": "success"}
-    except Exception as e:
-        log(f"❌ Error in fetch endpoint: {e}")
-        return {"status": "error", "message": str(e)}
+def fetch_invoices(payload: dict):
+    email_user = payload.get("email_user")
+    email_pass = payload.get("email_pass")
+    user_id = payload.get("user_id")
 
-# 📤 Get invoices for a user
-@app.get("/invoices/{user_id}")
-def get_invoices(user_id: int):
-    return invoice_store.get(user_id, [])
+    if not email_user or not email_pass:
+        return {"error": "Missing credentials"}, 400
+
+    result = fetch_invoices_from_all_pdfs(email_user, email_pass, user_id)
+
+    if result and "invoices" in result:
+        return result  # ✅ Return dictionary to Django
+    else:
+        return {"invoices": []}  # Ensure it never returns None
