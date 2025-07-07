@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  django:
+    build:
+      context: .
+      dockerfile: Dockerfile.django
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./django_frontend:/app
+    env_file:
+      - .env
+    depends_on:
+      - fastapi
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./fastapi_backend:/app
+    env_file:
+      - .env

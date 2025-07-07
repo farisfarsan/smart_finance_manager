@@ -1,0 +1,208 @@
+{% load custom_filters %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard | Smart Finance Manager</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>
+        .spinner {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100px;
+        }
+    </style>
+</head>
+<body class="bg-light">
+<div class="container py-5">
+
+    <h2 class="mb-4">Welcome, {{ request.user.username }}</h2>
+
+    {% if messages %}
+        {% for message in messages %}
+            <script>
+                Swal.fire({
+                    icon: '{{ message.tags }}',
+                    title: '{{ message.tags|title }}',
+                    text: '{{ message }}',
+                    timer: 3000,
+                    showConfirmButton: false
+                });
+            </script>
+        {% endfor %}
+    {% endif %}
+
+    <!-- Gmail Fetch Form -->
+    <form method="post" class="mb-4 p-4 bg-white shadow-sm rounded border">
+        {% csrf_token %}
+        <div class="row g-3 align-items-center">
+            <div class="col-md-3"><input type="text" class="form-control" name="email" placeholder="Gmail ID" required></div>
+            <div class="col-md-3"><input type="password" class="form-control" name="password" placeholder="App Password" required></div>
+            <div class="col-md-3">
+                <button type="button" class="btn btn-outline-info w-100" data-bs-toggle="modal" data-bs-target="#appPasswordModal">🔐 How to Generate Password</button>
+            </div>
+            <div class="col-md-3"><button type="submit" class="btn btn-primary w-100">Fetch Invoices</button></div>
+        </div>
+    </form>
+
+    <!-- Month Filter -->
+    <form method="get" class="mb-4">
+        <div class="row g-2">
+            <div class="col-auto">
+                <select name="month" class="form-select" onchange="this.form.submit()">
+                    <option value="">📅 All Months</option>
+                    {% for m in months %}
+                        <option value="{{ m.value }}" {% if month_filter == m.value %}selected{% endif %}>{{ m.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </form>
+
+    <!-- Smart Insight -->
+    {% if smart_insight %}
+        <div class="alert alert-info"><strong>🔍 Smart Insight:</strong> {{ smart_insight }}</div>
+    {% endif %}
+
+    <!-- Spend Summary -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card border-start border-3 border-primary shadow-sm h-100 py-3 px-4">
+                <h5 class="mb-1">This Month’s Spend: ₹{{ month_spend }}</h5>
+                <p class="mb-1 text-muted">Last Month: ₹{{ last_month_spend }}</p>
+                <p class="mb-0">
+                    {% if spend_diff > 0 %}
+                        🔺 Increased by ₹{{ spend_diff }} ({{ percent_diff }}%)
+                    {% elif spend_diff < 0 %}
+                        🔻 Decreased by ₹{{ spend_diff|abs_val }} ({{ percent_diff|abs_val }}%)
+                    {% else %}
+                        ➖ No change in spend
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Spend Chart -->
+    {% if chart_labels and chart_data %}
+        {% if total_chart_spend > 0 %}
+            <div class="card shadow-sm mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">📈 7-Day Spending Trend</h5>
+                    <canvas id="spendChart" height="100"></canvas>
+                </div>
+            </div>
+        {% else %}
+            <div class="alert alert-warning text-center mb-4">😕 No spending recorded in the past 7 days to display chart.</div>
+        {% endif %}
+    {% endif %}
+
+    <!-- Invoice Table -->
+    {% if invoices %}
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="card-title mb-0">Fetched Invoices</h5>
+                    <a href="{% url 'download_pdf' %}" class="btn btn-sm btn-outline-secondary">📄 Download PDF</a>
+                </div>
+                <table class="table table-striped mt-2">
+                    <thead>
+                        <tr><th>Date</th><th>Platform</th><th>Amount (₹)</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for inv in invoices %}
+                            <tr>
+                                <td>{{ inv.date_fetched|default:"N/A" }}</td>
+                                <td>{{ inv.platform|default:"Unknown" }}</td>
+                                <td>₹{{ inv.amount|floatformat:2 }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% elif not fetching %}
+        <p class="text-muted mt-4">No invoices to show yet.</p>
+    {% endif %}
+</div>
+
+<!-- App Password Modal -->
+<div class="modal fade" id="appPasswordModal" tabindex="-1" aria-labelledby="appPasswordModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">How to Generate App Password</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <ol>
+                    <li>Go to <a href="https://myaccount.google.com/apppasswords" target="_blank">Google App Passwords</a>.</li>
+                    <li>Choose "Mail" and select device → enter <strong>FinanceManager</strong>.</li>
+                    <li>Click <strong>Create</strong> and copy the password.</li>
+                    <li>Paste it into the "App Password" field here.</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- JS Dependencies -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        let spendChart;
+        const labels = {{ chart_labels|safe }};
+        const data = {{ chart_data|safe }};
+
+        function renderChart(labels, data) {
+            const ctx = document.getElementById('spendChart').getContext('2d');
+            if (spendChart) spendChart.destroy();
+            spendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '₹ Spent',
+                        data: data,
+                        borderColor: 'rgba(255, 0, 0, 1)',  // red
+                        borderWidth: 2,
+                        fill: false,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: value => '₹' + value
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Initial render
+        renderChart(labels, data);
+
+        // Refresh chart every ~50 minutes
+        setInterval(() => {
+            fetch('/api/latest-spend-chart/')
+                .then(res => res.json())
+                .then(newData => {
+                    if (newData.values.some(val => val !== 0)) {
+                        renderChart(newData.labels, newData.values);
+                    }
+                })
+                .catch(err => {
+                    console.error("❌ Chart update failed:", err);
+                });
+        }, 3000000);  // 50 minutes in ms
+    });
+</script>
+
+</body>
+</html>
