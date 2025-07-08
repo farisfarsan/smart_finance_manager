@@ -157,6 +157,4 @@ EMAIL_PASS=your-app-password
 
 ---
 
-## 📜 License
 
-MIT License. Feel free to fork, modify, and build your own financial agent!
